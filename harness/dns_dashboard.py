@@ -23,6 +23,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dnslib import DNSRecord, DNSHeader, QTYPE, RR, A, RCODE
 from dnslib.server import DNSServer, BaseResolver
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+try:
+    from decoy_pages import render_decoy_page
+except ImportError:
+    def render_decoy_page(host: str, path: str = "/") -> str:
+        return f"<h1>NetDecoy Spoof Decoy</h1><p>Requested: {host}</p>"
+
 UPSTREAM = "1.1.1.1"
 UPSTREAM_PORT = 53
 
@@ -394,18 +405,25 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path == "/" or self.path.startswith("/?"):
+        host = self.headers.get("Host", "")
+        # If accessing the dashboard from browser (localhost, or /api)
+        if self.path == "/api/status":
+            self._send_json(state.get_status())
+        elif self.path == "/dashboard" or (self.path in ("/", "") and ("localhost" in host or "127.0.0.1" in host)):
             body = HTML_DASHBOARD.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-        elif self.path == "/api/status":
-            self._send_json(state.get_status())
         else:
-            self.send_response(404)
+            # Deliver the decoy phishing simulation landing page
+            html_body = render_decoy_page(host, self.path).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html_body)))
             self.end_headers()
+            self.wfile.write(html_body)
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -456,9 +474,9 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
 
 def start_dns_server(port, address):
     state.dns_port = port
-    resolver = DashboardResolver()
-    server = DNSServer(resolver, port=port, address=address)
     try:
+        resolver = DashboardResolver()
+        server = DNSServer(resolver, port=port, address=address)
         state.dns_running = True
         state.dns_error = None
         server.start()
@@ -466,7 +484,7 @@ def start_dns_server(port, address):
         state.dns_running = False
         state.dns_error = str(e)
         print(f"\n[!] WARNING: Could not bind DNS on port {port}: {e}")
-        print("    If port 53 is busy, run PowerShell as Administrator or stop conflicting services.\n", flush=True)
+        print("    If port 53 is busy, run PowerShell as Administrator or stop conflicting services (e.g. PortmasterCore/SharedAccess).\n", flush=True)
 
 
 def main():
