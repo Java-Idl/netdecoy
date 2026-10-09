@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wi-Fi Login</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background:#0b1220; color:#e6edf3;
+           display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
+    .card { background:#111a2e; padding:32px; border-radius:14px; width:320px;
+            box-shadow:0 10px 40px rgba(0,0,0,.5); }
+    h1 { font-size:20px; margin:0 0 4px; }
+    p  { font-size:13px; color:#8aa; margin:0 0 20px; }
+    input { width:100%; box-sizing:border-box; padding:11px; margin:6px 0;
+            border-radius:8px; border:1px solid #2a3a5a; background:#0b1220; color:#fff; }
+    button { width:100%; padding:12px; margin-top:12px; border:0; border-radius:8px;
+             background:#3b82f6; color:#fff; font-weight:600; }
+    .warn { margin-top:16px; font-size:11px; color:#f59e0b; text-align:center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Free Airport Wi-Fi</h1>
+    <p>Sign in with your account to continue browsing.</p>
+    <form method="post" action="/login">
+      <input name="email" type="email" placeholder="Email or phone">
+      <input name="password" type="password" placeholder="Password">
+      <button type="submit">Connect</button>
+    </form>
+    <div class="warn">⚠ TEST DECOY — credential-harvesting page for NetDecoy demo only</div>
+  </div>
+</body>
+</html>

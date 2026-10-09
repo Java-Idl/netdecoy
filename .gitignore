@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Android & Gradle
+.gradle/
+**/.gradle/
+build/
+**/build/
+.kotlin/
+**/.kotlin/
+.cxx/
+**/.cxx/
+local.properties
+**/local.properties
+*.apk
+*.aab
+*.keystore
+!debug.keystore
+
+# iOS / Xcode
+Pods/
+**/Pods/
+DerivedData/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# IDE / System
+.DS_Store
+.idea/
+*.iml
+.metro-health-check*
