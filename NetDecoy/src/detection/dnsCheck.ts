@@ -1,8 +1,12 @@
 import { NetDecoy } from '../native/NetDecoyModule';
 import { DnsResult, DomainCheck } from './types';
 
-// Default canary domains: widely deployed, stable records.
-export const DEFAULT_CANARIES = ['google.com', 'cloudflare.com', 'example.com'];
+// Canary domains:
+// - one.one.one.one -> Cloudflare canonical Anycast (1.1.1.1, 1.0.0.1)
+// - example.com     -> IANA reserved static record (93.184.215.14 / 93.184.216.34)
+// - dns.google      -> Google canonical Anycast (8.8.8.8, 8.8.4.4)
+// - google.com      -> General search canary
+export const DEFAULT_CANARIES = ['one.one.one.one', 'example.com', 'dns.google', 'google.com'];
 
 const DOH_TIMEOUT_MS = 4500;
 
@@ -21,6 +25,30 @@ export function isPrivateOrBogon(ip: string): boolean {
   if (p[0] === 169 && p[1] === 254) return true;               // link-local (APIPA)
   if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true;  // CGNAT (100.64.0.0/10)
   if (p[0] === 0) return true;                                 // 0.0.0.0/8 sinkhole
+  return false;
+}
+
+/** Check if two IP sets share an exact IP or belong to the same CDN /16 edge cluster */
+function isSubnetOrAnycastMatch(a: string[], b: string[]): boolean {
+  if (a.length === 0 || b.length === 0) return false;
+
+  // 1. Exact IP match
+  const setB = new Set(b);
+  if (a.some((ip) => setB.has(ip))) return true;
+
+  // 2. Class B subnet match (/16) for public CDN clusters (e.g. 142.250.x.x Google edge nodes)
+  for (const ipA of a) {
+    const pA = ipA.split('.');
+    if (pA.length !== 4) continue;
+    for (const ipB of b) {
+      const pB = ipB.split('.');
+      if (pB.length !== 4) continue;
+      if (pA[0] === pB[0] && pA[1] === pB[1]) {
+        return true;
+      }
+    }
+  }
+
   return false;
 }
 
@@ -60,12 +88,6 @@ async function resolveViaDoh(domain: string): Promise<{ ips: string[]; provider:
   return { ips: [], provider: 'None (Unreachable)' };
 }
 
-function disjoint(a: string[], b: string[]): boolean {
-  if (a.length === 0 || b.length === 0) return false;
-  const setB = new Set(b);
-  return !a.some((ip) => setB.has(ip));
-}
-
 export async function runDnsCheck(customDomains: string[] = []): Promise<DnsResult> {
   const allDomains = Array.from(new Set([...DEFAULT_CANARIES, ...customDomains.filter(Boolean)]));
   let dohFailures = 0;
@@ -77,6 +99,7 @@ export async function runDnsCheck(customDomains: string[] = []): Promise<DnsResu
       let dohProvider = 'Cloudflare DoH';
 
       try {
+        // Queries Android's real active network DHCP resolver directly
         localIps = await NetDecoy.resolveViaNetwork(domain);
       } catch {
         localIps = [];
@@ -95,7 +118,8 @@ export async function runDnsCheck(customDomains: string[] = []): Promise<DnsResu
       }
 
       const privateAnswer = localIps.some(isPrivateOrBogon);
-      const diverged = disjoint(localIps, dohIps);
+      const isMatch = isSubnetOrAnycastMatch(localIps, dohIps);
+      const diverged = !isMatch && !privateAnswer && localIps.length > 0 && dohIps.length > 0;
       const isCustom = !DEFAULT_CANARIES.includes(domain);
 
       return { domain, localIps, dohIps, dohProvider, diverged, privateAnswer, isCustom };
@@ -125,7 +149,7 @@ export async function runDnsCheck(customDomains: string[] = []): Promise<DnsResu
     return {
       verdict: 'SAFE',
       checks,
-      reason: 'Local network resolver matches trusted encrypted DoH records on all tested canaries.',
+      reason: 'Local resolver answers match trusted DoH records with zero divergence or sinkholes.',
     };
   }
 
@@ -133,11 +157,11 @@ export async function runDnsCheck(customDomains: string[] = []): Promise<DnsResu
   const div = spoofed.filter((c) => c.diverged && !c.privateAnswer).map((c) => c.domain);
   const parts: string[] = [];
   if (priv.length) parts.push(`private/bogon IP answers for ${priv.join(', ')}`);
-  if (div.length) parts.push(`IP divergence vs DoH for ${div.join(', ')}`);
+  if (div.length) parts.push(`unrecognized IP divergence for ${div.join(', ')}`);
 
   return {
     verdict: 'ALERT',
     checks,
-    reason: `DNS Spoofing Detected: ${parts.join('; ')}.`,
+    reason: `DNS Spoofing Alert: ${parts.join('; ')}.`,
   };
 }
