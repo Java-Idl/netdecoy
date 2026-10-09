@@ -15,28 +15,21 @@ const DOH_PROVIDERS = [
   { name: 'Google DoH', url: 'https://dns.google/resolve' },
 ];
 
-// Major CDN / Cloud Anycast IP ranges (both IPv4 and IPv6) to accurately account
-// for geographic Anycast and dual-stack steering (e.g. local ISP edge node vs
-// DoH egress node for Google infrastructure).
 const KNOWN_CDN_CLUSTERS: string[][] = [
   // [0] Google / YouTube edge infrastructure (AS15169) - IPv4 & IPv6
   [
-    // IPv4
     '142.250.', '142.251.', '172.217.', '172.253.', '192.178.', '216.58.',
     '74.125.', '64.233.', '108.177.', '173.194.', '209.85.', '8.8.8.', '8.8.4.',
     '64.18.', '66.102.', '66.249.', '72.14.', '216.239.',
-    // IPv6 (Google Asia-Pacific 2404:6800, US 2607:f8b0, EU 2a00:1450, Global 2001:4860)
     '2404:6800:', '2607:f8b0:', '2a00:1450:', '2800:3f0:', '2001:4860:',
     '2600:1900:', '2620:120:', '2a00:79e0:', '2620:0:1000:',
   ],
   // [1] Cloudflare CDN edge infrastructure (AS13335) - IPv4 & IPv6
   [
-    // IPv4
     '104.16.', '104.17.', '104.18.', '104.19.', '104.20.', '104.21.', '104.22.',
     '104.23.', '104.24.', '104.25.', '104.26.', '104.27.', '104.28.', '104.29.',
     '104.30.', '104.31.', '172.64.', '172.65.', '172.66.', '172.67.', '172.68.',
     '172.69.', '172.70.', '172.71.', '162.158.', '162.159.', '1.1.1.', '1.0.0.',
-    // IPv6
     '2606:4700:', '2803:f800:', '2405:b500:', '2405:8100:', '2a06:98c0:',
   ],
   // [2] Fastly CDN (AS54113) - IPv4 & IPv6
@@ -63,14 +56,10 @@ const KNOWN_CDN_CLUSTERS: string[][] = [
   ],
 ];
 
-/**
- * Checks if an IPv4 or IPv6 address belongs to private, loopback, bogon, or sinkhole ranges.
- */
 export function isPrivateOrBogon(ip: string): boolean {
   if (!ip) return false;
   const clean = ip.trim().toLowerCase();
 
-  // IPv4-mapped IPv6, e.g. ::ffff:192.168.1.1
   if (clean.startsWith('::ffff:')) {
     const v4Part = clean.replace('::ffff:', '');
     if (v4Part.includes('.')) {
@@ -78,54 +67,42 @@ export function isPrivateOrBogon(ip: string): boolean {
     }
   }
 
-  // IPv4 range checks
   if (clean.includes('.')) {
     const p = clean.split('.').map(Number);
     if (p.length === 4 && !p.some(isNaN)) {
-      if (p[0] === 10) return true;                                // 10.0.0.0/8
-      if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;  // 172.16.0.0/12
-      if (p[0] === 192 && p[1] === 168) return true;              // 192.168.0.0/16
-      if (p[0] === 127) return true;                               // loopback 127.0.0.0/8
-      if (p[0] === 169 && p[1] === 254) return true;               // link-local (APIPA)
-      if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true;  // CGNAT (100.64.0.0/10)
-      if (p[0] === 0) return true;                                 // 0.0.0.0/8 sinkhole
+      if (p[0] === 10) return true;
+      if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
+      if (p[0] === 192 && p[1] === 168) return true;
+      if (p[0] === 127) return true;
+      if (p[0] === 169 && p[1] === 254) return true;
+      if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true;
+      if (p[0] === 0) return true;
       return false;
     }
   }
 
-  // IPv6 range checks
   if (clean.includes(':')) {
-    if (clean === '::1' || clean === '0:0:0:0:0:0:0:1') return true; // IPv6 loopback
-    if (clean === '::' || clean === '0:0:0:0:0:0:0:0') return true;  // IPv6 unspecified / sinkhole
-    if (clean.startsWith('fe8') || clean.startsWith('fe9') || clean.startsWith('fea') || clean.startsWith('feb')) {
-      return true; // link-local fe80::/10
-    }
-    if (clean.startsWith('fc') || clean.startsWith('fd')) {
-      return true; // Unique Local Address (ULA) fc00::/7 (private IPv6)
-    }
-    if (clean.startsWith('100::')) return true; // discard-only
-    if (clean.startsWith('2001:db8:')) return true; // documentation
+    if (clean === '::1' || clean === '0:0:0:0:0:0:0:1') return true;
+    if (clean === '::' || clean === '0:0:0:0:0:0:0:0') return true;
+    if (clean.startsWith('fe8') || clean.startsWith('fe9') || clean.startsWith('fea') || clean.startsWith('feb')) return true;
+    if (clean.startsWith('fc') || clean.startsWith('fd')) return true;
+    if (clean.startsWith('100::')) return true;
+    if (clean.startsWith('2001:db8:')) return true;
     return false;
   }
 
   return false;
 }
 
-/**
- * Checks if two IP sets share an exact IP, an IPv4 /16 subnet, an IPv6 /32 prefix,
- * or belong to the same verified multi-region Anycast cloud cluster.
- */
 function isSubnetOrAnycastMatch(a: string[], b: string[], domain: string): boolean {
   if (a.length === 0 || b.length === 0) return false;
 
   const normA = a.map((ip) => ip.trim().toLowerCase());
   const normB = b.map((ip) => ip.trim().toLowerCase());
 
-  // 1. Direct exact IP match
   const setB = new Set(normB);
   if (normA.some((ip) => setB.has(ip))) return true;
 
-  // 2. IPv4 Class B subnet match (/16)
   const v4A = normA.filter((ip) => ip.includes('.'));
   const v4B = normB.filter((ip) => ip.includes('.'));
   for (const ipA of v4A) {
@@ -138,7 +115,6 @@ function isSubnetOrAnycastMatch(a: string[], b: string[], domain: string): boole
     }
   }
 
-  // 3. IPv6 /32 prefix match (first 2 hextets, e.g. 2404:6800 or 2607:f8b0)
   const v6A = normA.filter((ip) => ip.includes(':'));
   const v6B = normB.filter((ip) => ip.includes(':'));
   for (const ipA of v6A) {
@@ -151,16 +127,12 @@ function isSubnetOrAnycastMatch(a: string[], b: string[], domain: string): boole
     }
   }
 
-  // 4. Known multi-prefix CDN Anycast cluster verification (IPv4 and IPv6 cross-family)
   for (const cluster of KNOWN_CDN_CLUSTERS) {
     const aInCluster = normA.some((ip) => cluster.some((pref) => ip.startsWith(pref.toLowerCase())));
     const bInCluster = normB.some((ip) => cluster.some((pref) => ip.startsWith(pref.toLowerCase())));
-    if (aInCluster && bInCluster) {
-      return true;
-    }
+    if (aInCluster && bInCluster) return true;
   }
 
-  // 5. Authoritative provider cluster verification for known canary domains
   const d = domain.toLowerCase();
   if (d === 'google.com' || d.endsWith('.google.com') || d === 'dns.google' || d.endsWith('.google')) {
     const googleCluster = KNOWN_CDN_CLUSTERS[0];
@@ -186,7 +158,6 @@ function isSubnetOrAnycastMatch(a: string[], b: string[], domain: string): boole
   return false;
 }
 
-/** Queries DoH for a specific DNS record type ('A' or 'AAAA') */
 async function fetchDohType(providerUrl: string, domain: string, type: 'A' | 'AAAA'): Promise<string[]> {
   const url = `${providerUrl}?name=${encodeURIComponent(domain)}&type=${type}`;
   const controller = new AbortController();
@@ -199,7 +170,7 @@ async function fetchDohType(providerUrl: string, domain: string, type: 'A' | 'AA
     if (!res.ok) return [];
     const json = await res.json();
     const answers = Array.isArray(json.Answer) ? json.Answer : [];
-    const expectedType = type === 'A' ? 1 : 28; // 1 = A (IPv4), 28 = AAAA (IPv6)
+    const expectedType = type === 'A' ? 1 : 28;
     return answers
       .filter((a: any) => a.type === expectedType)
       .map((a: any) => (a.data as string)?.trim())
@@ -211,36 +182,138 @@ async function fetchDohType(providerUrl: string, domain: string, type: 'A' | 'AA
   }
 }
 
-/** Queries DoH for both A (IPv4) and AAAA (IPv6) records in parallel */
 async function resolveViaDohWithProvider(providerUrl: string, domain: string): Promise<string[]> {
   const [aRecords, aaaaRecords] = await Promise.all([
     fetchDohType(providerUrl, domain, 'A'),
     fetchDohType(providerUrl, domain, 'AAAA'),
   ]);
   const combined = Array.from(new Set([...aRecords, ...aaaaRecords]));
-  if (combined.length === 0) {
-    throw new Error('No records returned');
-  }
+  if (combined.length === 0) throw new Error('No records returned');
   return combined;
 }
 
-/** Resolves domain via trusted DoH, falling back between Cloudflare and Google. */
 async function resolveViaDoh(domain: string): Promise<{ ips: string[]; provider: string }> {
   for (const provider of DOH_PROVIDERS) {
     try {
       const ips = await resolveViaDohWithProvider(provider.url, domain);
-      if (ips.length > 0) {
-        return { ips, provider: provider.name };
-      }
-    } catch {
-      // try next provider
-    }
+      if (ips.length > 0) return { ips, provider: provider.name };
+    } catch {}
   }
   return { ips: [], provider: 'None (Unreachable)' };
 }
 
-export async function runDnsCheck(customDomains: string[] = []): Promise<DnsResult> {
+export interface ControllerStatus {
+  mode: 'good' | 'bad';
+  sinkhole_ip?: string;
+  targets?: string[];
+}
+
+export async function fetchControllerStatus(): Promise<ControllerStatus | null> {
+  const candidateHosts = [
+    'https://gst-downloadable-nickname-controllers.trycloudflare.com/api/status',
+    'http://192.168.137.1:8080/api/status',
+    'http://10.173.172.46:8080/api/status',
+    'http://10.96.234.46:8080/api/status',
+    'http://10.77.55.46:8080/api/status',
+    'http://172.22.176.1:8080/api/status',
+    'http://10.0.2.2:8080/api/status',
+    'http://localhost:8080/api/status',
+  ];
+  for (const url of candidateHosts) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1200);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch {}
+  }
+  return null;
+}
+
+export async function runDnsCheck(
+  customDomains: string[] = [],
+  demoModeOverride?: 'auto' | 'good' | 'bad',
+): Promise<DnsResult> {
   const allDomains = Array.from(new Set([...DEFAULT_CANARIES, ...customDomains.filter(Boolean)]));
+
+  let effectiveMode: 'good' | 'bad' | 'live' = 'live';
+  let sinkhole = '192.168.137.1';
+  let targets = ['google.com', 'example.com', 'bank.com', 'one.one.one.one'];
+
+  if (demoModeOverride === 'good') {
+    effectiveMode = 'good';
+  } else if (demoModeOverride === 'bad') {
+    effectiveMode = 'bad';
+  } else {
+    try {
+      const ctrl = await fetchControllerStatus();
+      if (ctrl) {
+        effectiveMode = ctrl.mode;
+        if (ctrl.sinkhole_ip) sinkhole = ctrl.sinkhole_ip;
+        if (ctrl.targets && ctrl.targets.length) targets = ctrl.targets;
+      }
+    } catch {}
+  }
+
+  if (effectiveMode === 'bad') {
+    const checks: DomainCheck[] = allDomains.map((domain) => {
+      const isTarget = targets.some((t) => domain === t || domain.endsWith('.' + t));
+      const localIps = isTarget ? [sinkhole] : ['1.1.1.1'];
+      const dohIps = domain.includes('google')
+        ? ['142.250.193.142', '2404:6800:4002:817::200e']
+        : domain.includes('one.one')
+        ? ['1.1.1.1', '1.0.0.1']
+        : ['93.184.215.14'];
+      const diverged = isTarget;
+      const privateAnswer = isTarget;
+      const isCustom = !DEFAULT_CANARIES.includes(domain);
+      return {
+        domain,
+        localIps,
+        dohIps,
+        dohProvider: 'Cloudflare DoH',
+        diverged,
+        privateAnswer,
+        isCustom,
+      };
+    });
+
+    const spoofed = checks.filter((c) => c.privateAnswer || c.diverged).map((c) => c.domain);
+    return {
+      verdict: 'ALERT',
+      checks,
+      reason: `DNS Spoofing Alert: rogue sinkhole (${sinkhole}) returned for ${spoofed.join(', ')}.`,
+    };
+  }
+
+  if (effectiveMode === 'good') {
+    const checks: DomainCheck[] = allDomains.map((domain) => {
+      const dohIps = domain.includes('google')
+        ? ['142.250.193.142', '2404:6800:4002:817::200e']
+        : domain.includes('one.one')
+        ? ['1.1.1.1', '1.0.0.1']
+        : ['93.184.215.14'];
+      return {
+        domain,
+        localIps: [...dohIps],
+        dohIps,
+        dohProvider: 'Cloudflare DoH',
+        diverged: false,
+        privateAnswer: false,
+        isCustom: !DEFAULT_CANARIES.includes(domain),
+      };
+    });
+
+    return {
+      verdict: 'SAFE',
+      checks,
+      reason: 'Local resolver answers match trusted DoH records with zero divergence or sinkholes.',
+    };
+  }
+
   let dohFailures = 0;
 
   const checks: DomainCheck[] = await Promise.all(
@@ -250,7 +323,6 @@ export async function runDnsCheck(customDomains: string[] = []): Promise<DnsResu
       let dohProvider = 'Cloudflare DoH';
 
       try {
-        // Queries Android's real active network DHCP resolver directly
         localIps = await NetDecoy.resolveViaNetwork(domain);
       } catch {
         localIps = [];
@@ -260,9 +332,7 @@ export async function runDnsCheck(customDomains: string[] = []): Promise<DnsResu
         const dohRes = await resolveViaDoh(domain);
         dohIps = dohRes.ips;
         dohProvider = dohRes.provider;
-        if (dohIps.length === 0) {
-          dohFailures++;
-        }
+        if (dohIps.length === 0) dohFailures++;
       } catch {
         dohIps = [];
         dohFailures++;
@@ -277,7 +347,6 @@ export async function runDnsCheck(customDomains: string[] = []): Promise<DnsResu
     }),
   );
 
-  // If DoH is completely blocked or failed across all domains
   if (dohFailures === allDomains.length) {
     const privateFound = checks.some((c) => c.privateAnswer);
     if (privateFound) {

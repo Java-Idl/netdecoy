@@ -400,14 +400,24 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
     def do_GET(self):
         host = self.headers.get("Host", "")
-        # If accessing the dashboard from browser (localhost, or /api)
-        if self.path == "/api/status":
+        # If accessing the dashboard from browser or app
+        if self.path in ("/api/status", "/api/mode"):
             self._send_json(state.get_status())
         elif self.path == "/dashboard" or (self.path in ("/", "") and ("localhost" in host or "127.0.0.1" in host)):
             body = HTML_DASHBOARD.encode("utf-8")

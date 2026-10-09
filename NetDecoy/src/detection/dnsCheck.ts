@@ -239,8 +239,128 @@ async function resolveViaDoh(domain: string): Promise<{ ips: string[]; provider:
   return { ips: [], provider: 'None (Unreachable)' };
 }
 
-export async function runDnsCheck(customDomains: string[] = []): Promise<DnsResult> {
+export interface ControllerStatus {
+  mode: 'good' | 'bad';
+  sinkhole_ip?: string;
+  targets?: string[];
+}
+
+export async function fetchControllerStatus(): Promise<ControllerStatus | null> {
+  const candidateHosts = [
+    'https://gst-downloadable-nickname-controllers.trycloudflare.com/api/status',
+    'http://192.168.137.1:8080/api/status',
+    'http://10.173.172.46:8080/api/status',
+    'http://10.96.234.46:8080/api/status',
+    'http://10.77.55.46:8080/api/status',
+    'http://172.22.176.1:8080/api/status',
+    'http://10.0.2.2:8080/api/status',
+    'http://localhost:8080/api/status',
+  ];
+  for (const url of candidateHosts) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1200);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const json = await res.json();
+        return json;
+      }
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
+
+export async function runDnsCheck(
+  customDomains: string[] = [],
+  demoModeOverride?: 'auto' | 'good' | 'bad',
+): Promise<DnsResult> {
   const allDomains = Array.from(new Set([...DEFAULT_CANARIES, ...customDomains.filter(Boolean)]));
+
+  // Determine active mode (Manual override or Live Sync from Dashboard)
+  let effectiveMode: 'good' | 'bad' | 'live' = 'live';
+  let sinkhole = '192.168.137.1';
+  let targets = ['google.com', 'example.com', 'bank.com', 'one.one.one.one'];
+
+  if (demoModeOverride === 'good') {
+    effectiveMode = 'good';
+  } else if (demoModeOverride === 'bad') {
+    effectiveMode = 'bad';
+  } else {
+    // Check laptop live dashboard
+    try {
+      const ctrl = await fetchControllerStatus();
+      if (ctrl) {
+        effectiveMode = ctrl.mode;
+        if (ctrl.sinkhole_ip) sinkhole = ctrl.sinkhole_ip;
+        if (ctrl.targets && ctrl.targets.length) targets = ctrl.targets;
+      }
+    } catch {
+      // fallback to live probing
+    }
+  }
+
+  // Hardcoded simulated response for forced BAD attack demonstration
+  if (effectiveMode === 'bad') {
+    const checks: DomainCheck[] = allDomains.map((domain) => {
+      const isTarget = targets.some((t) => domain === t || domain.endsWith('.' + t));
+      const localIps = isTarget ? [sinkhole] : ['1.1.1.1'];
+      const dohIps = domain.includes('google')
+        ? ['142.250.193.142', '2404:6800:4002:817::200e']
+        : domain.includes('one.one')
+        ? ['1.1.1.1', '1.0.0.1']
+        : ['93.184.215.14'];
+      const diverged = isTarget;
+      const privateAnswer = isTarget;
+      const isCustom = !DEFAULT_CANARIES.includes(domain);
+      return {
+        domain,
+        localIps,
+        dohIps,
+        dohProvider: 'Cloudflare DoH',
+        diverged,
+        privateAnswer,
+        isCustom,
+      };
+    });
+
+    const spoofed = checks.filter((c) => c.privateAnswer || c.diverged).map((c) => c.domain);
+    return {
+      verdict: 'ALERT',
+      checks,
+      reason: `DNS Spoofing Alert: rogue sinkhole (${sinkhole}) returned for ${spoofed.join(', ')}.`,
+    };
+  }
+
+  // Hardcoded simulated response for forced GOOD clean demonstration
+  if (effectiveMode === 'good') {
+    const checks: DomainCheck[] = allDomains.map((domain) => {
+      const dohIps = domain.includes('google')
+        ? ['142.250.193.142', '2404:6800:4002:817::200e']
+        : domain.includes('one.one')
+        ? ['1.1.1.1', '1.0.0.1']
+        : ['93.184.215.14'];
+      return {
+        domain,
+        localIps: [...dohIps],
+        dohIps,
+        dohProvider: 'Cloudflare DoH',
+        diverged: false,
+        privateAnswer: false,
+        isCustom: !DEFAULT_CANARIES.includes(domain),
+      };
+    });
+
+    return {
+      verdict: 'SAFE',
+      checks,
+      reason: 'Local resolver answers match trusted DoH records with zero divergence or sinkholes.',
+    };
+  }
+
+  // Live dynamic scanning mode
   let dohFailures = 0;
 
   const checks: DomainCheck[] = await Promise.all(

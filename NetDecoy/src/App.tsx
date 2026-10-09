@@ -36,6 +36,7 @@ function AppContent() {
   const [lastScanTime, setLastScanTime] = useState<string>();
   const [customDomainInput, setCustomDomainInput] = useState('');
   const [customDomains, setCustomDomains] = useState<string[]>([]);
+  const [demoMode, setDemoMode] = useState<'auto' | 'good' | 'bad'>('auto');
 
   const handleAddDomain = () => {
     const trimmed = customDomainInput.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
@@ -73,8 +74,8 @@ function AppContent() {
     try {
       const [s, p, d] = await Promise.all([
         NetDecoy.getNetworkStatus().catch(() => undefined),
-        runPortalCheck(),
-        runDnsCheck(customDomains),
+        runPortalCheck(demoMode),
+        runDnsCheck(customDomains, demoMode),
       ]);
       setStatus(s);
       setPortal(p);
@@ -83,7 +84,7 @@ function AppContent() {
     } finally {
       setBusy(false);
     }
-  }, [customDomains]);
+  }, [customDomains, demoMode]);
 
   const verdict = overall(dns?.verdict, portal?.verdict);
 
@@ -96,6 +97,24 @@ function AppContent() {
         </View>
         <Text style={styles.title}>NetDecoy</Text>
         <Text style={styles.subtitle}>Autonomous Rogue Wi-Fi & DNS Spoofing Detector</Text>
+
+        <View style={styles.demoBar}>
+          <Pressable
+            style={[styles.demoTab, demoMode === 'auto' && styles.demoTabActive]}
+            onPress={() => setDemoMode('auto')}>
+            <Text style={[styles.demoTabText, demoMode === 'auto' && styles.demoTabTextActive]}>⚡ Live Sync</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.demoTab, demoMode === 'good' && styles.demoTabGood]}
+            onPress={() => setDemoMode('good')}>
+            <Text style={[styles.demoTabText, demoMode === 'good' && styles.demoTabTextActive]}>🟢 SAFE</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.demoTab, demoMode === 'bad' && styles.demoTabBad]}
+            onPress={() => setDemoMode('bad')}>
+            <Text style={[styles.demoTabText, demoMode === 'bad' && styles.demoTabTextActive]}>🔴 SPOOF ATTACK</Text>
+          </Pressable>
+        </View>
       </View>
 
       {(dns || portal) && (
@@ -394,4 +413,39 @@ const styles = StyleSheet.create({
   },
   mono: { color: '#94a3b8', fontSize: 12, fontFamily: 'monospace', marginTop: 1 },
   flag: { color: '#f87171', fontSize: 12, fontWeight: '600', marginTop: 4 },
+  demoBar: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+    backgroundColor: '#0f172a',
+    padding: 4,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  },
+  demoTab: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  demoTabActive: {
+    backgroundColor: '#1e293b',
+  },
+  demoTabGood: {
+    backgroundColor: '#065f46',
+  },
+  demoTabBad: {
+    backgroundColor: '#7f1d1d',
+  },
+  demoTabText: {
+    color: '#94a3b8',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  demoTabTextActive: {
+    color: '#f8fafc',
+    fontWeight: '800',
+  },
 });

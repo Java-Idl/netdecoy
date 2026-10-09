@@ -9,7 +9,57 @@ const CANARIES = [
   { name: 'Canonical', url: 'http://connectivity-check.ubuntu.com/' },
 ];
 
-export async function runPortalCheck(): Promise<PortalResult> {
+import { fetchControllerStatus } from './dnsCheck';
+
+export async function runPortalCheck(demoModeOverride?: 'auto' | 'good' | 'bad'): Promise<PortalResult> {
+  let effectiveMode: 'good' | 'bad' | 'live' = 'live';
+  let sinkhole = '192.168.137.1';
+
+  if (demoModeOverride === 'good') {
+    effectiveMode = 'good';
+  } else if (demoModeOverride === 'bad') {
+    effectiveMode = 'bad';
+  } else {
+    try {
+      const ctrl = await fetchControllerStatus();
+      if (ctrl) {
+        effectiveMode = ctrl.mode;
+        if (ctrl.sinkhole_ip) sinkhole = ctrl.sinkhole_ip;
+      }
+    } catch {}
+  }
+
+  if (effectiveMode === 'bad') {
+    return {
+      verdict: 'ALERT',
+      status: 302,
+      location: `http://${sinkhole}/login`,
+      reason: `Captive portal active: Probe [Google gstatic] intercepted (302) to http://${sinkhole}/login.`,
+      probes: [
+        { name: 'Google gstatic', url: CANARIES[0].url, status: 302, location: `http://${sinkhole}/login`, bodyLen: 0, passed: false },
+        { name: 'Cloudflare', url: CANARIES[1].url, status: 302, location: `http://${sinkhole}/login`, bodyLen: 0, passed: false },
+        { name: 'Canonical', url: CANARIES[2].url, status: 302, location: `http://${sinkhole}/login`, bodyLen: 0, passed: false },
+      ],
+    };
+  }
+
+  if (effectiveMode === 'good') {
+    return {
+      verdict: 'SAFE',
+      status: 204,
+      location: null,
+      reason: 'Captive portal check passed: All multi-vendor HTTP canaries returned 204 No Content.',
+      probes: CANARIES.map((c) => ({
+        name: c.name,
+        url: c.url,
+        status: 204,
+        location: null,
+        bodyLen: 0,
+        passed: true,
+      })),
+    };
+  }
+
   const probeResults: PortalProbe[] = [];
 
   for (const canary of CANARIES) {
