@@ -100,24 +100,34 @@ class DashboardResolver(BaseResolver):
             is_bad = (state.mode == "bad")
             sinkhole = state.sinkhole_ip
 
-        if is_bad and qtype == "A" and state.matches_target(qname):
-            reply = DNSRecord(
-                DNSHeader(id=request.header.id, qr=1, aa=1, ra=1),
-                q=request.q,
-            )
-            reply.add_answer(RR(request.q.qname, QTYPE.A, rdata=A(sinkhole), ttl=60))
-            state.add_log(qname, qtype, client_ip, "SPOOFED", sinkhole)
-            print(f" [!] SPOOFED: {qname} -> {sinkhole} (for {client_ip})", flush=True)
-            return reply
+        if is_bad and state.matches_target(qname):
+            if qtype == "A":
+                reply = DNSRecord(
+                    DNSHeader(id=request.header.id, qr=1, aa=1, ra=1),
+                    q=request.q,
+                )
+                reply.add_answer(RR(request.q.qname, QTYPE.A, rdata=A(sinkhole), ttl=60))
+                state.add_log(qname, qtype, client_ip, "SPOOFED", sinkhole)
+                print(f" [!] SPOOFED: {qname} (A) -> {sinkhole} (for {client_ip})", flush=True)
+                return reply
+            elif qtype == "AAAA":
+                # Return empty NOERROR (NODATA) so client does not bypass spoofed IPv4 with upstream IPv6
+                reply = DNSRecord(
+                    DNSHeader(id=request.header.id, qr=1, aa=1, ra=1),
+                    q=request.q,
+                )
+                state.add_log(qname, qtype, client_ip, "SPOOFED", "NODATA (Forces IPv4)")
+                print(f" [!] SPOOFED: {qname} (AAAA) -> NODATA (for {client_ip})", flush=True)
+                return reply
 
         # Clean truthful forwarder
         try:
             raw = request.send(UPSTREAM, UPSTREAM_PORT, timeout=3)
             reply = DNSRecord.parse(raw)
-            answers = [str(r.rdata) for r in reply.rr if r.rtype == 1]
+            answers = [str(r.rdata) for r in reply.rr if r.rtype in (1, 28)]
             ans_str = ", ".join(answers[:3]) or "OK"
             state.add_log(qname, qtype, client_ip, "CLEAN", ans_str)
-            print(f" [*] CLEAN:   {qname} -> {ans_str}", flush=True)
+            print(f" [*] CLEAN:   {qname} ({qtype}) -> {ans_str}", flush=True)
             return reply
         except Exception as e:
             state.add_log(qname, qtype, client_ip, "ERROR", str(e))

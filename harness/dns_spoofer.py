@@ -44,17 +44,21 @@ class SpoofResolver(BaseResolver):
         qname = str(request.q.qname)
         qtype = QTYPE[request.q.qtype]
 
-        # Only hijack A lookups for target domains; proxy the rest.
-        # AAAA queries are passed through — returning an A record for an AAAA
-        # query produces a malformed response that many clients silently ignore.
-        if qtype == "A" and _matches(qname):
-            print(f"[SPOOF] {qname} ({qtype}) -> {self.sinkhole}", flush=True)
-            reply = DNSRecord(
-                DNSHeader(id=request.header.id, qr=1, aa=1, ra=1),
-                q=request.q,
-            )
-            reply.add_answer(RR(request.q.qname, QTYPE.A, rdata=A(self.sinkhole), ttl=60))
-            return reply
+        if _matches(qname):
+            if qtype == "A":
+                print(f"[SPOOF] {qname} (A) -> {self.sinkhole}", flush=True)
+                reply = DNSRecord(
+                    DNSHeader(id=request.header.id, qr=1, aa=1, ra=1),
+                    q=request.q,
+                )
+                reply.add_answer(RR(request.q.qname, QTYPE.A, rdata=A(self.sinkhole), ttl=60))
+                return reply
+            elif qtype == "AAAA":
+                print(f"[SPOOF] {qname} (AAAA) -> NODATA (forces IPv4)", flush=True)
+                return DNSRecord(
+                    DNSHeader(id=request.header.id, qr=1, aa=1, ra=1),
+                    q=request.q,
+                )
 
         # --- transparent proxy to real upstream ---
         try:
