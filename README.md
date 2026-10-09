@@ -67,6 +67,20 @@ Get-Process -Id (Get-NetUDPEndpoint -LocalPort 53).OwningProcess
 
 Point the spoofer's sinkhole and the portal's gateway at `LAPTOP_IP`:
 
+### Option A — Interactive Web Dashboard (Recommended)
+
+Run the unified DNS Controller with a live local web interface:
+
+```powershell
+python dns_dashboard.py
+```
+Open **`http://localhost:8080`** in your browser. This web page gives you:
+- **1-Click Mode Toggle**: Switch between **GOOD DNS** (Clean forwarder -> SAFE in app) and **BAD DNS** (Spoofing attacker -> ALERT in app) in real time without restarting.
+- **Live Traffic Feed**: Watch DNS queries from your phone stream in real time.
+- **Custom Target Domains**: Add/remove hijacked domains on the fly.
+
+### Option B — Classic CLI Harness
+
 ```powershell
 # terminal 1 — rogue resolver (hijacks google.com / example.com / bank.com)
 python dns_spoofer.py --sinkhole <LAPTOP_IP>
@@ -74,10 +88,6 @@ python dns_spoofer.py --sinkhole <LAPTOP_IP>
 # terminal 2 — captive portal (302s every plaintext GET to a fake login)
 python captive_portal.py --gateway <LAPTOP_IP>
 ```
-
-Edit `TARGET_SUFFIXES` in `dns_spoofer.py` to add domains you want hijacked (add
-`connectivitycheck.gstatic.com` too if you want the DNS layer to funnel the canary
-straight to your portal).
 
 ---
 
