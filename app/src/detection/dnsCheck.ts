@@ -15,6 +15,23 @@ const DOH_PROVIDERS = [
   { name: 'Google DoH', url: 'https://dns.google/resolve' },
 ];
 
+// Major CDN / Cloud Anycast IP ranges to accurately account for geographic Anycast steering
+// (e.g. local Indian ISP edge node vs Cloudflare US/EU egress node for Google infrastructure)
+const KNOWN_CDN_CLUSTERS = [
+  // Google / YouTube edge infrastructure (AS15169)
+  ['142.250.', '142.251.', '172.217.', '172.253.', '192.178.', '216.58.', '74.125.', '64.233.'],
+  // Cloudflare CDN edge infrastructure (AS13335)
+  [
+    '104.16.', '104.17.', '104.18.', '104.19.', '104.20.', '104.21.', '104.22.',
+    '104.23.', '104.24.', '104.25.', '104.26.', '104.27.', '104.28.', '172.64.',
+    '172.65.', '172.66.', '172.67.',
+  ],
+  // Fastly CDN (AS54113)
+  ['151.101.', '199.232.'],
+  // Microsoft / Azure edge (AS8075)
+  ['20.190.', '40.126.', '13.107.', '204.79.197.'],
+];
+
 export function isPrivateOrBogon(ip: string): boolean {
   const p = ip.split('.').map(Number);
   if (p.length !== 4 || p.some(isNaN)) return false;
@@ -28,24 +45,31 @@ export function isPrivateOrBogon(ip: string): boolean {
   return false;
 }
 
-/** Check if two IP sets share an exact IP or belong to the same CDN /16 edge cluster */
+/** Check if two IP sets share an exact IP, a subnet, or belong to the same verified CDN cluster */
 function isSubnetOrAnycastMatch(a: string[], b: string[]): boolean {
   if (a.length === 0 || b.length === 0) return false;
 
-  // 1. Exact IP match
+  // 1. Direct exact IP match
   const setB = new Set(b);
   if (a.some((ip) => setB.has(ip))) return true;
 
-  // 2. Class B subnet match (/16) for public CDN clusters (e.g. 142.250.x.x Google edge nodes)
+  // 2. Class B subnet match (/16)
   for (const ipA of a) {
     const pA = ipA.split('.');
     if (pA.length !== 4) continue;
     for (const ipB of b) {
       const pB = ipB.split('.');
       if (pB.length !== 4) continue;
-      if (pA[0] === pB[0] && pA[1] === pB[1]) {
-        return true;
-      }
+      if (pA[0] === pB[0] && pA[1] === pB[1]) return true;
+    }
+  }
+
+  // 3. Known multi-prefix CDN Anycast cluster verification
+  for (const cluster of KNOWN_CDN_CLUSTERS) {
+    const aInCluster = a.some((ip) => cluster.some((pref) => ip.startsWith(pref)));
+    const bInCluster = b.some((ip) => cluster.some((pref) => ip.startsWith(pref)));
+    if (aInCluster && bInCluster) {
+      return true;
     }
   }
 
